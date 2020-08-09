@@ -55,14 +55,14 @@ ClientStorage::Client::Client(const std::shared_ptr<Frame> &_currentFrame)
 }
 
 std::shared_ptr<std::vector<uint8_t>> ClientStorage::Client::waitData(const int &_nTimeOutMsec) {
-    auto data = mCurrentFrame->getData().lock();
+//    auto data = mCurrentFrame->getData().lock();
 
-    if (!data) {
-        // wait data
+//    if (!data) {
+//        // wait data
+//
+//        data = mCurrentFrame->getData().lock();
+//    }
 
-        data = mCurrentFrame->getData().lock();
-    }
-
-    return data;
+    return nullptr;
 }
 

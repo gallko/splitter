@@ -1,12 +1,14 @@
 #pragma once
 
-#include <list>
+#include <vector>
+#include <map>
 #include <condition_variable>
 #include "ISplitter.h"
 
 class Splitter_impl : public ISplitter {
 public:
     Splitter_impl(int _nMaxBuffers, int _nMaxClients);
+    ~Splitter_impl() override = default;
 
 /* class ISplitter */
     bool SplitterInfoGet(OUT int *_pnMaxBuffers, OUT int *_pnMaxClients) override;
@@ -19,9 +21,32 @@ public:
     int SplitterGet(IN int _nClientID, OUT std::shared_ptr<std::vector<uint8_t>> &_pVecGet, IN int _nTimeOutMsec) override;
     void SplitterClose() override;
 
-private:
+    int push(const std::shared_ptr<std::vector<uint8_t>> &_data, int _ttl, int _nTimeOutMsec = 0);
 
-    std::list< std::shared_ptr<std::vector<uint8_t>> > mStorage;
-    std::mutex  mLockStorage;
-    std::condition_variable mCvStorage;
+private:
+    std::shared_ptr<std::vector<uint8_t>> pop(int id, int index, int _nTimeOutMsec = 0);
+
+    const int mMaxClients;
+
+    static int sIdFrame;
+    static int sIdClient;
+    struct Item {
+        Item() : _data(nullptr), _id(-1), _ttl(0) {}
+        std::mutex _lock;
+        std::condition_variable _cvWait;
+        std::shared_ptr<std::vector<uint8_t>> _data;
+        int _id;
+        int _ttl;
+    };
+    struct Client {
+        int _idFrame;
+        int _indexFrame;
+    };
+
+    std::mutex mLockStorage;
+    std::condition_variable mWaitStorageFrame;
+    std::vector<Item> mStorageFrame;
+    std::map<int, Item> mStorageClient;
+    int mHeadStorageFrame, mTailStorageFrame;
+    /* end guard mLockStorageFrame */
 };
