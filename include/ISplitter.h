@@ -10,6 +10,16 @@
 #   define OUT
 #endif
 
+enum ResultCode {
+    SUCCESS = 0,
+    FLUSH,
+    CLOSED,
+    TIME_OUT,
+    CLIENT_MISSED_DATA,
+    CLIENT_NOT_FOUND,
+    CLIENT_REMOVED
+};
+
 // ISplitter интерфейс
 class ISplitter {
 public:
