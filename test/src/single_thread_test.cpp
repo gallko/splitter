@@ -44,18 +44,13 @@ TEST_F(SingleThreadTest, IsEmptyInitially) {
 
 TEST_F(SingleThreadTest, AddingClient) {
     int clientID0 = 0, clientID1 = 0, clientID2 = 0, count = -1;
-    bool result;
 
-    result = fifo0->SplitterClientGetCount(&count);
+    EXPECT_TRUE(fifo0->SplitterClientGetCount(&count));
     EXPECT_EQ(0, count);
-    EXPECT_TRUE(result);
 
-    result = fifo0->SplitterClientAdd(&clientID0);
-    EXPECT_TRUE(result);
-    result = fifo0->SplitterClientAdd(&clientID1);
-    EXPECT_TRUE(result);
-    result = fifo0->SplitterClientAdd(&clientID2);
-    EXPECT_TRUE(result);
+    EXPECT_TRUE(fifo0->SplitterClientAdd(&clientID0));
+    EXPECT_TRUE(fifo0->SplitterClientAdd(&clientID1));
+    EXPECT_TRUE(fifo0->SplitterClientAdd(&clientID2));
 
     ASSERT_NE(0, clientID0);
     ASSERT_NE(0, clientID1);
@@ -65,24 +60,36 @@ TEST_F(SingleThreadTest, AddingClient) {
     ASSERT_NE(clientID1, clientID2);
 
     for(int i = 0; i < 7; ++i) {
-        result = fifo0->SplitterClientAdd(&count);
-        EXPECT_TRUE(result);
-        result = fifo0->SplitterClientGetCount(&count);
-        EXPECT_TRUE(result);
+        EXPECT_TRUE(fifo0->SplitterClientAdd(&count));
+        EXPECT_TRUE(fifo0->SplitterClientGetCount(&count));
         EXPECT_EQ(i + 4, count);
     }
 
-    result = fifo0->SplitterClientGetCount(&count);
+    EXPECT_TRUE(fifo0->SplitterClientGetCount(&count));
     EXPECT_EQ(10, count);
-    EXPECT_TRUE(result);
 
-    result = fifo0->SplitterClientAdd(&count);
-    EXPECT_FALSE(result);
+    EXPECT_FALSE(fifo0->SplitterClientAdd(&count));
     EXPECT_EQ(10, count);
 }
 
-TEST_F(SingleThreadTest, ExtractDataFromEmpty) {
+TEST_F(SingleThreadTest, InvalidClient) {
+    int clientID0 = 0;
+    std::shared_ptr <std::vector<uint8_t>> data;
 
+    EXPECT_TRUE(fifo0->SplitterClientAdd(&clientID0));
+    EXPECT_FALSE(fifo0->SplitterClientRemove(clientID0+2));
+//    fifo0->SplitterClientGetByIndex()
+    EXPECT_EQ(CLIENT_NOT_FOUND,fifo0->SplitterGet(clientID0+1, data, 50));
+}
+
+TEST_F(SingleThreadTest, ExtractDataFromEmpty) {
+    int clientID0 = -1, result = -1;
+    long time = 0;
+    std::shared_ptr <std::vector<uint8_t>> data;
+    EXPECT_TRUE(fifo0->SplitterClientAdd(&clientID0));
+    MEASURE_CALL_R(time, result, fifo0->SplitterGet, clientID0, data, 50);
+    EXPECT_EQ(TIME_OUT, result);
+    ASSERT_LE(time, 51);
 }
 
 TEST_F(SingleThreadTest, OverflowQueue) {
