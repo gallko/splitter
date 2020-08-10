@@ -1,15 +1,19 @@
 cmake_minimum_required(VERSION 3.10)
-project(splitter)
+project(SplitterImp)
 
 set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Threads)
+set(EXTERNAL_LIB ext_lib)
 
-include_directories(include)
+set(BINARY_NAME splitter)
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
-file(GLOB ${PROJECT_NAME}_src
-        ./*.cpp
-        ./src/*.cpp)
+add_subdirectory(test)
+add_subdirectory(src)
 
-add_executable(splitter ${${PROJECT_NAME}_src})
-target_link_libraries(${PROJECT_NAME} ${CMAKE_THREAD_LIBS_INIT} )
+add_subdirectory(${EXTERNAL_LIB}/googletest
+        ${CMAKE_CURRENT_BINARY_DIR}/googletest-build
+        EXCLUDE_FROM_ALL)

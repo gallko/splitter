@@ -6,7 +6,7 @@
 #include <list>
 #include <condition_variable>
 #include <shared_mutex>
-#include "ISplitter.h"
+#include <ISplitter.h>
 
 class Splitter_impl : public ISplitter {
     enum class ReasonWakeUp;
