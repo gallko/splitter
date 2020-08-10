@@ -50,10 +50,12 @@ bool Splitter_impl::SplitterClientAdd(int *_pnClientID) {
     bool result = false;
     if (mIsOpen.load(std::memory_order_acquire)) {
         std::unique_lock<std::shared_mutex> lockClient(mLockClient);
-        std::unique_lock<std::mutex> lockStorage(mLockStorage);
-        *_pnClientID = ++sIdClient;
-        mStorageClient[*_pnClientID] = mHead;
-        result = SUCCESS;
+        if (mStorageClient.size() != mMaxClients) {
+            std::unique_lock<std::mutex> lockStorage(mLockStorage);
+            *_pnClientID = ++sIdClient;
+            mStorageClient[*_pnClientID] = mHead;
+            result = true;
+        }
     }
     return result;
 }
@@ -79,8 +81,8 @@ bool Splitter_impl::SplitterClientRemove(int _nClientID) {
 }
 
 bool Splitter_impl::SplitterClientGetCount(int *_pnCount) {
-    std::unique_lock<std::mutex> lockStorage(mLockStorage);
-    *_pnCount = mSize;
+    std::shared_lock<std::shared_mutex> lockStorage(mLockClient);
+    *_pnCount = mStorageClient.size();
     return true;
 }
 
@@ -96,12 +98,12 @@ void Splitter_impl::SplitterClose() {
  *
  * */
 Splitter_impl::Splitter_impl(int _nMaxBuffers, int _nMaxClients)
-        : mIsOpen(true)
-        , mMaxClients(_nMaxClients)
+        : mMaxClients(_nMaxClients)
         , mMaxBuffers(_nMaxBuffers)
-        , mLockStorage()
+        , mIsOpen(true)
         , mWakeUpHead()
         , mWakeUpTail()
+        , mLockStorage()
         , mHead(nullptr)
         , mTail(nullptr)
         , mSize(0)
