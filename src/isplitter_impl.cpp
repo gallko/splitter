@@ -17,6 +17,7 @@ bool Splitter_impl::SplitterInfoGet(int *_pnMaxBuffers, int *_pnMaxClients) {
 int Splitter_impl::SplitterPut(const std::shared_ptr<std::vector<uint8_t>> &_pVecPut, int _nTimeOutMsec) {
     int result = CLOSED;
     if (mIsOpen.load(std::memory_order_acquire)) {
+        std::unique_lock<std::shared_mutex> lockClient(mLockClient);
         result = push(_pVecPut, mStorageClient.size(), _nTimeOutMsec);
     }
     return result;
@@ -40,7 +41,16 @@ int Splitter_impl::SplitterGet(int _nClientID, std::shared_ptr<std::vector<uint8
 int Splitter_impl::SplitterFlush() {
     int result = CLOSED;
     if (mIsOpen.load(std::memory_order_acquire)) {
-        flushBuffer();
+        std::unique_lock<std::shared_mutex> lockClient(mLockClient);
+        std::unique_lock<std::mutex> lockStorage(mLockStorage);
+        for (auto it: mStorageClient) {
+            auto item = it.second.lock();
+            while (item != mHead) {
+                item = item->mNext;
+            }
+            it.second = mHead;
+        }
+        mTail = mHead;
         result = SUCCESS;
     }
     return result;
@@ -63,31 +73,61 @@ bool Splitter_impl::SplitterClientAdd(int *_pnClientID) {
 bool Splitter_impl::SplitterClientRemove(int _nClientID) {
     bool result = false;
     if (mIsOpen.load(std::memory_order_acquire)) {
-        std::unique_lock<std::shared_mutex> lock(mLockClient);
+        std::unique_lock<std::shared_mutex> lockClient(mLockClient);
         auto it = mStorageClient.find(_nClientID);
         if (it != mStorageClient.end()) {
-            std::unique_lock<std::mutex> lockStorage(mLockStorage);
-
-            auto removedItem = it->second;
             mLockStorage.lock();
-            mStorageClient.erase(it);
+            auto removedItem = it->second.lock();
             auto endRemoved = mHead;
+            mStorageClient.erase(it);
             mLockStorage.unlock();
+            lockClient.unlock();
 
-            // decrease all ttl [removedItem, endRemoved)
+            while (removedItem != endRemoved) {
+                if (removedItem->mTtl.fetch_sub(1) == 1) {
+                    std::unique_lock<std::mutex> lockStorage(mLockStorage);
+                    mTail = mTail->mNext;
+                }
+                removedItem = removedItem->mNext;
+            }
+
+            result = true;
         }
     }
     return result;
 }
 
 bool Splitter_impl::SplitterClientGetCount(int *_pnCount) {
-    std::shared_lock<std::shared_mutex> lockStorage(mLockClient);
+    std::shared_lock<std::shared_mutex> lockClient(mLockClient);
     *_pnCount = mStorageClient.size();
     return true;
 }
 
 bool Splitter_impl::SplitterClientGetByIndex(int _nIndex, int *_pnClientID, int *_pnLatency) {
-    return false;
+    bool result = false;
+    if (mIsOpen.load(std::memory_order_acquire)) {
+        std::shared_lock<std::shared_mutex> lockClient(mLockClient);
+        if (_nIndex < mStorageClient.size()) {
+            auto client = std::next(mStorageClient.begin(), _nIndex);
+            *_pnClientID = client->first;
+
+            mLockStorage.lock();
+            auto head = mHead;
+            auto tail = client->second.lock();
+            if (!tail) {
+                client->second = tail = mTail;
+            }
+            mLockStorage.unlock();
+
+            *_pnLatency = 0;
+            while (tail != head) {
+                tail = tail->mNext;
+                ++*_pnLatency;
+            }
+            result = true;
+        }
+    }
+    return result;
 }
 
 void Splitter_impl::SplitterClose() {
@@ -130,17 +170,18 @@ int Splitter_impl::push(const std::shared_ptr<std::vector<uint8_t>> &_data, int 
             return mWakeUpTail == ReasonWakeUp::removed_item;
         });
         if (!flag) { // the last element wasn't read, delete it
-            mTail = mTail->mNext;
+            mTail = std::move(mTail->mNext);
             --mSize;
             code = CLIENT_MISSED_DATA;
         }
     }
 
-    mHead->mNext = std::make_shared<Item>();
-    mHead->mData = _data;
-    mHead->mTtl.store(_ttl, std::memory_order_release);
+    auto ptr = std::move(mHead);
+    ptr->mNext = std::make_shared<Item>();
+    ptr->mData = _data;
+    ptr->mTtl.store(_ttl, std::memory_order_release);
+    mHead = ptr->mNext;
 
-    mHead = mHead->mNext;
     ++mSize;
 
     mWakeUpHead = ReasonWakeUp::added_item;
