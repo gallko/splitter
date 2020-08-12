@@ -10,8 +10,9 @@
 #   define OUT
 #endif
 
-enum ResultCode {
-    SUCCESS = 0,
+enum ResultCode : int {
+    UNKNOWN = -1,
+    SUCCESS,
     FLUSH,
     CLOSED,
     TIME_OUT,

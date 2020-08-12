@@ -14,7 +14,12 @@ class Splitter_impl : public ISplitter {
 
 public:
     Splitter_impl(int _nMaxBuffers, int _nMaxClients);
-    ~Splitter_impl() override = default;
+    ~Splitter_impl() override;
+
+    Splitter_impl(const Splitter_impl&) = delete;
+    Splitter_impl(Splitter_impl&&) = delete;
+    Splitter_impl &operator=(const Splitter_impl&) = delete;
+    Splitter_impl &operator=(Splitter_impl&&) = delete;
 
 /* class ISplitter */
     bool SplitterInfoGet(OUT int *_pnMaxBuffers, OUT int *_pnMaxClients) override;
@@ -30,7 +35,7 @@ public:
 private:
     int push(const std::shared_ptr<std::vector<uint8_t>> &_data, int _ttl, int _nTimeOutMsec = 0);
     int extract_data(std::weak_ptr<Item> &_item, std::shared_ptr<std::vector<uint8_t>> &_data, int _nTimeOutMsec);
-    void flushBuffer() {};
+    void clearBuffer();
 
 private:
     const int mMaxClients;
@@ -40,7 +45,7 @@ private:
 
     std::atomic<bool> mIsOpen;
 
-    ReasonWakeUp mWakeUpHead, mWakeUpTail;
+    ReasonWakeUp mWakeUpReasonHead, mWakeUpReasonTail;
     std::mutex mLockStorage;
     std::condition_variable mWaitHead, mWaitTail;
     std::shared_ptr<Item> mHead, mTail;
@@ -52,7 +57,7 @@ private:
 };
 
 enum class Splitter_impl::ReasonWakeUp {
-    added_item, removed_item, reset, fake
+    added_item, removed_item, reset, closed, removed_client, fake
 };
 
 struct Splitter_impl::Item {
