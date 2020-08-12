@@ -11,7 +11,6 @@
 #endif
 
 enum ResultCode : int {
-    UNKNOWN = -1,
     SUCCESS,
     FLUSH,
     CLOSED,

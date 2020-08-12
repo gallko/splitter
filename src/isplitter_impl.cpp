@@ -21,7 +21,11 @@ int Splitter_impl::SplitterPut(const std::shared_ptr<std::vector<uint8_t>> &_pVe
     int result = CLOSED;
     if (mIsOpen.load(std::memory_order_acquire)) {
         std::unique_lock<std::shared_mutex> lockClient(mLockClient);
-        result = push(_pVecPut, mStorageClient.size(), _nTimeOutMsec);
+        if (!mStorageClient.empty()) {
+            result = push(_pVecPut, mStorageClient.size(), _nTimeOutMsec);
+        } else {
+            result = SUCCESS;
+        }
     }
     return result;
 }
@@ -165,6 +169,12 @@ Splitter_impl::Splitter_impl(int _nMaxBuffers, int _nMaxClients)
 
 Splitter_impl::~Splitter_impl() {
     mIsOpen.store(false, std::memory_order_release);
+    std::unique_lock<std::shared_mutex> lockClient(mLockClient);
+    std::unique_lock<std::mutex> lockStorage(mLockStorage);
+    mWakeUpReasonHead = ReasonWakeUp::closed;
+    mWakeUpReasonTail = ReasonWakeUp::closed;
+    mWaitHead.notify_all();
+    mWaitTail.notify_all();
     clearBuffer();
     mStorageClient.clear();
 }
