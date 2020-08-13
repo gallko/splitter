@@ -205,7 +205,7 @@ int Splitter_impl::push(const std::shared_ptr<std::vector<uint8_t>> &_data, int 
         });
 
         if (!flag) { // the last element wasn't read, delete it
-            mTail = std::move(mTail->mNext);
+            mTail = mTail->mNext;
             --mSize;
             code = CLIENT_MISSED_DATA;
         }
@@ -264,6 +264,8 @@ int Splitter_impl::extract_data(std::weak_ptr<Item> &_item, std::shared_ptr<std:
                 mWakeUpReasonTail = ReasonWakeUp::removed_item;
             }
             mWaitTail.notify_all();
+        } else {
+            --item->mTtl;
         }
         _data = item->mData;
         _item = item->mNext;
