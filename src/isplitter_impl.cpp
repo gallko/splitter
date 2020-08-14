@@ -9,7 +9,7 @@ std::shared_ptr<ISplitter> SplitterCreate(IN int _nMaxBuffers, IN int _nMaxClien
 }
 
 bool Splitter_impl::SplitterInfoGet(int *_pnMaxBuffers, int *_pnMaxClients) {
-    if (mIsOpen.load(std::memory_order_acquire)) {
+    if (mIsOpen.load()) {
         *_pnMaxBuffers = mMaxBuffers;
         *_pnMaxClients = mMaxClients;
         return true;
@@ -19,20 +19,24 @@ bool Splitter_impl::SplitterInfoGet(int *_pnMaxBuffers, int *_pnMaxClients) {
 
 int Splitter_impl::SplitterPut(const std::shared_ptr<std::vector<uint8_t>> &_pVecPut, int _nTimeOutMsec) {
     int result = CLOSED;
-    if (mIsOpen.load(std::memory_order_acquire)) {
-        std::unique_lock<std::shared_mutex> lockClient(mLockClient);
+    if (mIsOpen.load()) {
+        std::shared_lock<std::shared_mutex> lockClient(mLockClient);
         if (!mStorageClient.empty()) {
+            lockClient.unlock();
             result = push(_pVecPut, mStorageClient.size(), _nTimeOutMsec);
         } else {
             result = SUCCESS;
         }
+    } else {
+        result = CLOSED;
     }
     return result;
 }
 
 int Splitter_impl::SplitterGet(int _nClientID, std::shared_ptr<std::vector<uint8_t>> &_pVecGet, int _nTimeOutMsec) {
     int result;
-    if (mIsOpen.load(std::memory_order_acquire)) {
+    if (mIsOpen.load()) {
+        std::shared_lock<std::shared_mutex> lockClient(mLockClient);
         auto it = mStorageClient.find(_nClientID);
         if (it != mStorageClient.end()) {
             result = extract_data(it->second, _pVecGet, _nTimeOutMsec);
@@ -47,14 +51,20 @@ int Splitter_impl::SplitterGet(int _nClientID, std::shared_ptr<std::vector<uint8
 
 int Splitter_impl::SplitterFlush() {
     int result = CLOSED;
-    if (mIsOpen.load(std::memory_order_acquire)) {
-        std::unique_lock<std::shared_mutex> lockClient(mLockClient);
+    if (mIsOpen.load()) {
+        std::shared_lock<std::shared_mutex> lockClient(mLockClient);
         std::unique_lock<std::mutex> lockStorage(mLockStorage);
+        for (auto it: mStorageClient) {
+            it.second = mHead;
+        }
+        while (mTail != mHead) {
+            mTail = mTail->mNext;
+        }
+        mSize = 0;
         mWakeUpReasonHead = ReasonWakeUp::reset;
         mWakeUpReasonTail = ReasonWakeUp::reset;
         mWaitHead.notify_all();
         mWaitTail.notify_all();
-        clearBuffer();
         result = SUCCESS;
     }
     return result;
@@ -62,7 +72,7 @@ int Splitter_impl::SplitterFlush() {
 
 bool Splitter_impl::SplitterClientAdd(int *_pnClientID) {
     bool result = false;
-    if (mIsOpen.load(std::memory_order_acquire)) {
+    if (mIsOpen.load()) {
         std::unique_lock<std::shared_mutex> lockClient(mLockClient);
         if (mStorageClient.size() != mMaxClients) {
             std::unique_lock<std::mutex> lockStorage(mLockStorage);
@@ -76,14 +86,20 @@ bool Splitter_impl::SplitterClientAdd(int *_pnClientID) {
 
 bool Splitter_impl::SplitterClientRemove(int _nClientID) {
     bool result = false;
-    if (mIsOpen.load(std::memory_order_acquire)) {
+    if (mIsOpen.load()) {
         std::unique_lock<std::shared_mutex> lockClient(mLockClient);
         auto it = mStorageClient.find(_nClientID);
         if (it != mStorageClient.end()) {
             mLockStorage.lock();
             auto removedItem = it->second.lock();
             auto endRemoved = mHead;
+            it->second.reset();
             mStorageClient.erase(it);
+
+            mWakeUpReasonHead = ReasonWakeUp::removed_client;
+            mWakeUpReasonTail = ReasonWakeUp::removed_client;
+            mWaitHead.notify_all();
+            mWaitTail.notify_all();
             mLockStorage.unlock();
             lockClient.unlock();
 
@@ -94,7 +110,6 @@ bool Splitter_impl::SplitterClientRemove(int _nClientID) {
                 }
                 removedItem = removedItem->mNext;
             }
-
             result = true;
         }
     }
@@ -102,7 +117,7 @@ bool Splitter_impl::SplitterClientRemove(int _nClientID) {
 }
 
 bool Splitter_impl::SplitterClientGetCount(int *_pnCount) {
-    if (mIsOpen.load(std::memory_order_acquire)) {
+    if (mIsOpen.load()) {
         std::shared_lock<std::shared_mutex> lockClient(mLockClient);
         *_pnCount = mStorageClient.size();
         return true;
@@ -112,7 +127,7 @@ bool Splitter_impl::SplitterClientGetCount(int *_pnCount) {
 
 bool Splitter_impl::SplitterClientGetByIndex(int _nIndex, int *_pnClientID, int *_pnLatency) {
     bool result = false;
-    if (mIsOpen.load(std::memory_order_acquire)) {
+    if (mIsOpen.load()) {
         std::shared_lock<std::shared_mutex> lockClient(mLockClient);
         if (_nIndex < mStorageClient.size()) {
             auto client = std::next(mStorageClient.begin(), _nIndex);
@@ -138,14 +153,19 @@ bool Splitter_impl::SplitterClientGetByIndex(int _nIndex, int *_pnClientID, int 
 }
 
 void Splitter_impl::SplitterClose() {
-    mIsOpen.store(false, std::memory_order_release);
-    std::unique_lock<std::shared_mutex> lockClient(mLockClient);
-    std::unique_lock<std::mutex> lockStorage(mLockStorage);
-    mWakeUpReasonHead = ReasonWakeUp::closed;
-    mWakeUpReasonTail = ReasonWakeUp::closed;
-    mWaitHead.notify_all();
-    mWaitTail.notify_all();
-    clearBuffer();
+    mIsOpen.store(false );
+    {
+        std::unique_lock<std::mutex> lockStorage(mLockStorage);
+        mWakeUpReasonHead = ReasonWakeUp::closed;
+        mWakeUpReasonTail = ReasonWakeUp::closed;
+        mWaitHead.notify_all();
+        mWaitTail.notify_all();
+    }
+
+    while (mTail != mHead) {
+        mTail = mTail->mNext;
+    }
+    mSize = 0;
     mStorageClient.clear();
 }
 
@@ -168,14 +188,16 @@ Splitter_impl::Splitter_impl(int _nMaxBuffers, int _nMaxClients)
 }
 
 Splitter_impl::~Splitter_impl() {
-    mIsOpen.store(false, std::memory_order_release);
+    mIsOpen.store(false);
     std::unique_lock<std::shared_mutex> lockClient(mLockClient);
     std::unique_lock<std::mutex> lockStorage(mLockStorage);
     mWakeUpReasonHead = ReasonWakeUp::closed;
     mWakeUpReasonTail = ReasonWakeUp::closed;
     mWaitHead.notify_all();
     mWaitTail.notify_all();
-    clearBuffer();
+    while (mTail != mHead) {
+        mTail = mTail->mNext;
+    }
     mStorageClient.clear();
 }
 
@@ -238,18 +260,26 @@ int Splitter_impl::extract_data(std::weak_ptr<Item> &_item, std::shared_ptr<std:
         }
         if (item == mHead) { // is storage empty?
             mWakeUpReasonHead = ReasonWakeUp::fake;
-           // waiting to come data
-            auto flag = mWaitHead.wait_for(lockStorage, std::chrono::milliseconds(_nTimeOutMsec), [this, &code](){
+            // waiting to come data
+            mLockClient.unlock();
+            auto flag = mWaitHead.wait_for(lockStorage, std::chrono::milliseconds(_nTimeOutMsec), [this, &code, &_item](){
                 switch (mWakeUpReasonHead) {
                     case ReasonWakeUp::removed_item:
                     case ReasonWakeUp::fake: return false;
                     case ReasonWakeUp::added_item: return true;
                     case ReasonWakeUp::reset: code = FLUSH; return true;
                     case ReasonWakeUp::closed: code = CLOSED; return true;
-                    case ReasonWakeUp::removed_client: code = CLIENT_REMOVED; return true;
+                    case ReasonWakeUp::removed_client:
+                        if (_item.expired()) {
+                            code = CLIENT_REMOVED;
+                            return true;
+                        } else {
+                            return false;
+                        }
                 }
                 return false;
             });
+            mLockClient.lock_shared();
             if (!flag) { // an element wasn't add
                 code = TIME_OUT;
             }
@@ -262,8 +292,8 @@ int Splitter_impl::extract_data(std::weak_ptr<Item> &_item, std::shared_ptr<std:
                 mTail = mTail->mNext;
                 --mSize;
                 mWakeUpReasonTail = ReasonWakeUp::removed_item;
+                mWaitTail.notify_all();
             }
-            mWaitTail.notify_all();
         } else {
             --item->mTtl;
         }
@@ -272,15 +302,3 @@ int Splitter_impl::extract_data(std::weak_ptr<Item> &_item, std::shared_ptr<std:
     }
     return code;
 }
-
-inline void Splitter_impl::clearBuffer() {
-    for (auto it: mStorageClient) {
-        auto item = it.second.lock();
-        while (item != mHead) {
-            item = item->mNext;
-        }
-        it.second = mHead;
-    }
-    mTail = mHead;
-}
-

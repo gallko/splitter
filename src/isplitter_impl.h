@@ -35,7 +35,6 @@ public:
 private:
     int push(const std::shared_ptr<std::vector<uint8_t>> &_data, int _ttl, int _nTimeOutMsec = 0);
     int extract_data(std::weak_ptr<Item> &_item, std::shared_ptr<std::vector<uint8_t>> &_data, int _nTimeOutMsec);
-    void clearBuffer();
 
 private:
     const int mMaxClients;
@@ -53,7 +52,6 @@ private:
 
     std::shared_mutex mLockClient;
     std::map<int, std::weak_ptr<Item>> mStorageClient;
-    /* end guard mLockStorageFrame */
 };
 
 enum class Splitter_impl::ReasonWakeUp {
