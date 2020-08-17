@@ -27,14 +27,12 @@ int Splitter_impl::SplitterPut(const std::shared_ptr<std::vector<uint8_t>> &_pVe
         } else {
             result = SUCCESS;
         }
-    } else {
-        result = CLOSED;
     }
     return result;
 }
 
 int Splitter_impl::SplitterGet(int _nClientID, std::shared_ptr<std::vector<uint8_t>> &_pVecGet, int _nTimeOutMsec) {
-    int result;
+    int result = CLOSED;
     if (mIsOpen.load()) {
         std::shared_lock<std::shared_mutex> lockClient(mLockClient);
         auto it = mStorageClient.find(_nClientID);
@@ -43,8 +41,6 @@ int Splitter_impl::SplitterGet(int _nClientID, std::shared_ptr<std::vector<uint8
         } else {
             result = CLIENT_NOT_FOUND;
         }
-    } else {
-        result = CLOSED;
     }
     return result;
 }
@@ -52,7 +48,7 @@ int Splitter_impl::SplitterGet(int _nClientID, std::shared_ptr<std::vector<uint8
 int Splitter_impl::SplitterFlush() {
     int result = CLOSED;
     if (mIsOpen.load()) {
-        std::shared_lock<std::shared_mutex> lockClient(mLockClient);
+        std::unique_lock<std::shared_mutex> lockClient(mLockClient);
         std::unique_lock<std::mutex> lockStorage(mLockStorage);
         for (auto it: mStorageClient) {
             it.second = mHead;
@@ -162,6 +158,8 @@ void Splitter_impl::SplitterClose() {
         mWaitTail.notify_all();
     }
 
+    std::unique_lock lockClient(mLockClient);
+    std::unique_lock lockStorage(mLockStorage);
     while (mTail != mHead) {
         mTail = mTail->mNext;
     }
@@ -188,17 +186,7 @@ Splitter_impl::Splitter_impl(int _nMaxBuffers, int _nMaxClients)
 }
 
 Splitter_impl::~Splitter_impl() {
-    mIsOpen.store(false);
-    std::unique_lock<std::shared_mutex> lockClient(mLockClient);
-    std::unique_lock<std::mutex> lockStorage(mLockStorage);
-    mWakeUpReasonHead = ReasonWakeUp::closed;
-    mWakeUpReasonTail = ReasonWakeUp::closed;
-    mWaitHead.notify_all();
-    mWaitTail.notify_all();
-    while (mTail != mHead) {
-        mTail = mTail->mNext;
-    }
-    mStorageClient.clear();
+    Splitter_impl::SplitterClose();
 }
 
 int Splitter_impl::push(const std::shared_ptr<std::vector<uint8_t>> &_data, int _ttl, int _nTimeOutMsec) {
